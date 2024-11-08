@@ -1,0 +1,16 @@
+# Dependencies
+node_modules
+venv
+
+# Environment
+.env
+.env.local
+
+# Build
+dist
+build
+__pycache__
+
+# Temporary files
+*.mp4
+temp/ 
