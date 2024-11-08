@@ -15,11 +15,10 @@ export default function VideoForm() {
     return null
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     setStatus('Processing...')
-    
     try {
       const response = await fetch('http://localhost:8000/api/process-video', {
         method: 'POST',
@@ -36,7 +35,7 @@ export default function VideoForm() {
       const data = await response.json()
       setStatus(`Job ID: ${data.job_id}`)
     } catch (error) {
-      setError('Error: ' + (error as Error).message)
+      setError('Error: ' + error.message)
       setStatus('')
     }
   }
