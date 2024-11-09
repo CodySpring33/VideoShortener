@@ -4,8 +4,14 @@ import yt_dlp
 import os
 import logging
 import random
-from moviepy.editor import VideoFileClip, concatenate_videoclips
+from moviepy.editor import (
+    VideoFileClip, 
+    AudioFileClip,
+    concatenate_videoclips,
+    concatenate_audioclips
+)
 from .utils.s3 import S3Handler
+import time
 
 # Initialize Celery with explicit config module
 app = Celery('tasks')
@@ -32,9 +38,11 @@ class ProgressHook:
                 pass
 
 @app.task(bind=True)
-def process_video(self, youtube_url: str):
+def process_video(self, youtube_url: str, media_type: str = 'video'):
+    original_file = None
+    processed_file = None
+    
     try:
-        # Initialize download state
         self.update_state(
             state='DOWNLOADING',
             meta={'progress': 0, 'message': 'Starting download...'}
@@ -42,36 +50,78 @@ def process_video(self, youtube_url: str):
         
         os.makedirs('/tmp/videos', exist_ok=True)
         
+        format_option = 'bestaudio' if media_type == 'audio' else 'best'
+        
+        # For audio, let yt-dlp handle the initial download without extension
+        base_output_template = '/tmp/videos/%(id)s'
+            
         ydl_opts = {
-            'format': 'best',
-            'outtmpl': '/tmp/videos/%(id)s.%(ext)s',
+            'format': format_option,
+            'outtmpl': base_output_template,
             'progress_hooks': [ProgressHook(self.request.id)]
         }
 
+        if media_type == 'audio':
+            ydl_opts.update({
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+            })
+
+        # Add transition state for download completion
+        self.update_state(
+            state='DOWNLOADING',
+            meta={'progress': 95, 'message': 'Download completing...'}
+        )
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=True)
-            video_path = ydl.prepare_filename(info)
+            video_id = info['id']
+            
+            if media_type == 'audio':
+                original_file = f'/tmp/videos/{video_id}.mp3'
+            else:
+                original_file = f'/tmp/videos/{video_id}.mp4'
 
-        # Update to processing state
-        self.update_state(
-            state='PROCESSING',
-            meta={'progress': 0, 'message': 'Processing video...'}
-        )
+            # Add post-download verification state
+            self.update_state(
+                state='VERIFYING DOWNLOAD',
+                meta={'progress': 98, 'message': 'Verifying download...'}
+            )
+
+            # Wait for file to be fully written (max 10 seconds)
+            max_wait = 10
+            wait_time = 0
+            while not os.path.exists(original_file) and wait_time < max_wait:
+                time.sleep(0.5)
+                wait_time += 0.5
+
+            # Verify the file exists
+            if not os.path.exists(original_file):
+                raise FileNotFoundError(f"Downloaded file not found at {original_file} after {max_wait} seconds")
+
+            # Verify file size
+            file_size = os.path.getsize(original_file)
+            if file_size == 0:
+                raise ValueError(f"Downloaded file is empty: {original_file}")
+
+        processed_file = create_random_clips(original_file, self, media_type=media_type)
         
-        output_path = create_random_clips(video_path, self)
-        
-        # Update to uploading state
         self.update_state(
             state='UPLOADING',
             meta={'progress': 0, 'message': 'Uploading to S3...'}
         )
         
         s3_handler = S3Handler()
-        download_url = s3_handler.upload_file(output_path)
+        download_url = s3_handler.upload_file(processed_file)
         
-        # Clean up the original downloaded video
-        if os.path.exists(video_path):
-            os.remove(video_path)
+        # Clean up both original and processed files
+        if original_file and os.path.exists(original_file):
+            os.remove(original_file)
+        if processed_file and os.path.exists(processed_file):
+            os.remove(processed_file)
         
         return {
             "status": "SUCCESS",
@@ -80,104 +130,121 @@ def process_video(self, youtube_url: str):
         }
 
     except Exception as e:
+        # Clean up files in case of error
+        if original_file and os.path.exists(original_file):
+            os.remove(original_file)
+        if processed_file and os.path.exists(processed_file):
+            os.remove(processed_file)
+            
+        error_msg = f"Error processing {media_type}: {str(e)}"
+        print(error_msg)
+        print(traceback.format_exc())
+        
         return {
             "status": "ERROR",
-            "message": str(e)
+            "message": error_msg
         }
 
-def create_random_clips(input_path: str, task, target_duration: int = 1500) -> str:
-    video = VideoFileClip(input_path)
-    total_duration = video.duration
-    clips = []
-    current_duration = 0
-    used_segments = []
-
-    # Allocate progress percentages for different stages
-    CLIP_SELECTION_PROGRESS = 10  # 0-30% for selecting clips
-    CLIP_CREATION_PROGRESS = 20   # 30-70% for creating clips
-    CONCATENATION_PROGRESS = 20   # 70-85% for concatenating
-    WRITING_PROGRESS = 50         # 85-100% for writing file
-
-    while current_duration < target_duration:
-        # Calculate progress for clip selection
-        selection_progress = (current_duration / target_duration) * CLIP_SELECTION_PROGRESS
-        task.update_state(
-            state='PROCESSING',
-            meta={
-                'progress': selection_progress,
-                'message': f'Selecting clips: {selection_progress:.1f}%'
-            }
-        )
+def create_random_clips(input_path: str, task, target_duration: int = 1500, media_type: str = 'video') -> str:
+    try:
+        if media_type == 'video':
+            clip = VideoFileClip(input_path)
+        else:
+            clip = AudioFileClip(input_path)
         
-        remaining_duration = target_duration - current_duration
-        # Set clip duration to around 5 minutes (300 seconds)
-        clip_duration = min(random.randint(270, 330), remaining_duration)
-        
-        while True:
-            max_start = total_duration - clip_duration
-            start_time = random.uniform(0, max_start)
+        total_duration = clip.duration
+        clips = []
+        current_duration = 0
+        used_segments = []
+
+        # Calculate number of chunks needed (5-minute segments)
+        chunk_duration = random.randint(270, 330)  # 4.5-5.5 minutes
+        estimated_chunks = target_duration / chunk_duration
+        chunks_processed = 0
+
+        while current_duration < target_duration:
+            # Calculate progress based on chunks processed
+            chunks_processed += 1
+            progress = min(95, (chunks_processed / estimated_chunks) * 95)  # Leave 5% for final concatenation
             
-            overlap = False
-            for used_start, used_end in used_segments:
-                if not (start_time + clip_duration <= used_start or start_time >= used_end):
-                    overlap = True
+            task.update_state(
+                state='PROCESSING',
+                meta={
+                    'progress': progress,
+                    'message': f'Processing chunk {chunks_processed} of {int(estimated_chunks)}'
+                }
+            )
+            
+            remaining_duration = target_duration - current_duration
+            clip_duration = min(chunk_duration, remaining_duration)
+            
+            while True:
+                max_start = total_duration - clip_duration
+                start_time = random.uniform(0, max_start)
+                
+                overlap = False
+                for used_start, used_end in used_segments:
+                    if not (start_time + clip_duration <= used_start or start_time >= used_end):
+                        overlap = True
+                        break
+                
+                if not overlap:
                     break
-            
-            if not overlap:
-                break
 
-        # Update progress for clip creation
-        creation_progress = CLIP_SELECTION_PROGRESS + ((current_duration / target_duration) * CLIP_CREATION_PROGRESS)
+            subclip = clip.subclip(start_time, start_time + clip_duration)
+            clips.append(subclip)
+            used_segments.append((start_time, start_time + clip_duration))
+            current_duration += clip_duration
+
         task.update_state(
             state='PROCESSING',
             meta={
-                'progress': creation_progress,
-                'message': f'Creating clip {len(clips) + 1}: {creation_progress:.1f}%'
+                'progress': 95,
+                'message': f'Finalizing {media_type}...'
             }
         )
-        
-        clip = video.subclip(start_time, start_time + clip_duration)
-        clips.append(clip)
-        used_segments.append((start_time, start_time + clip_duration))
-        current_duration += clip_duration
 
-    # Update progress for concatenation start
-    task.update_state(
-        state='PROCESSING',
-        meta={
-            'progress': CLIP_SELECTION_PROGRESS + CLIP_CREATION_PROGRESS,
-            'message': 'Starting concatenation...'
-        }
-    )
-    
-    final_video = concatenate_videoclips(clips)
-    output_path = input_path.rsplit('.', 1)[0] + '_processed.mp4'
+        if media_type == 'video':
+            final_clip = concatenate_videoclips(clips)
+            output_path = input_path.replace('.mp4', '_processed.mp4')
+            final_clip.write_videofile(
+                output_path,
+                codec='libx264',
+                audio_codec='aac',
+                temp_audiofile='temp-audio.m4a',
+                remove_temp=True
+            )
+        else:
+            final_clip = concatenate_audioclips(clips)
+            output_path = input_path.replace('.mp3', '_processed.mp3')
+            final_clip.write_audiofile(
+                output_path,
+                codec='libmp3lame',
+                bitrate='192k'
+            )
 
-    # Update progress for writing start
-    task.update_state(
-        state='PROCESSING',
-        meta={
-            'progress': CLIP_SELECTION_PROGRESS + CLIP_CREATION_PROGRESS + CONCATENATION_PROGRESS,
-            'message': 'Writing final video...'
-        }
-    )
-    
-    # Write the final video
-    final_video.write_videofile(
-        output_path,
-        codec='libx264',
-        audio_codec='aac',
-        temp_audiofile='temp-audio.m4a',
-        remove_temp=True
-    )
+        # Final progress update
+        task.update_state(
+            state='PROCESSING',
+            meta={
+                'progress': 100,
+                'message': f'Processing complete'
+            }
+        )
 
-    # Clean up
-    final_video.close()
-    for clip in clips:
+        # Clean up
         clip.close()
-    video.close()
+        for c in clips:
+            c.close()
+        final_clip.close()
 
-    return output_path
+        return output_path
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in create_random_clips: {str(e)}")
+        print(traceback.format_exc())
+        raise e
 
 @app.task
 def cleanup_s3_file(file_path: str):
