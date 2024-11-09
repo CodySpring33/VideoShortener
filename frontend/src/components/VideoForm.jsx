@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import React from 'react'
 
 export default function VideoForm() {
@@ -44,8 +44,10 @@ export default function VideoForm() {
     }
   }, [jobId])
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = useCallback(async (e) => {
     e.preventDefault()
+    if (!url) return // Add validation
+    
     setError('')
     setStatus('STARTING')
     setProgress(0)
@@ -71,7 +73,28 @@ export default function VideoForm() {
       setError('Error: ' + error.message)
       setStatus('')
     }
-  }
+  }, [url, mediaType])
+
+  useEffect(() => {
+    const handleAutoProcess = async (event) => {
+      const { url, mediaType } = event.detail
+      setUrl(url)
+      setMediaType(mediaType)
+      
+      // Wait for state updates to complete
+      await new Promise(resolve => setTimeout(resolve, 0))
+      
+      // Trigger the handleSubmit function directly
+      const fakeEvent = { preventDefault: () => {} }
+      handleSubmit(fakeEvent)
+    }
+
+    window.addEventListener('auto-process-video', handleAutoProcess)
+    
+    return () => {
+      window.removeEventListener('auto-process-video', handleAutoProcess)
+    }
+  }, [handleSubmit])
 
   if (!mounted) return null
 
