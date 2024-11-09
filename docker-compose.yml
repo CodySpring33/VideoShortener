@@ -16,7 +16,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "8123:8123"
     volumes:
       - ./backend:/app
       - video_temp:/tmp/videos

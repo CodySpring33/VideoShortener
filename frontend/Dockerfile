@@ -20,6 +20,7 @@ COPY . .
 RUN mkdir -p /app/.next && \
     chmod -R 777 /app/.next
 
+
 # Expose port 3456
 EXPOSE 3456
 
