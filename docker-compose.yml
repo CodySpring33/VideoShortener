@@ -56,3 +56,4 @@ volumes:
       type: none
       o: bind
       device: './downloads'
+  redis_data:
