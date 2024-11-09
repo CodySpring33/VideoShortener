@@ -115,7 +115,17 @@ export default function VideoForm() {
       )}
 
       {downloadUrl && (
-        <div className="mt-6">
+        <div className="mt-6 space-y-4">
+          <div className="aspect-video w-full">
+            <video 
+              className="w-full rounded-lg"
+              controls
+              src={downloadUrl}
+            >
+              Your browser does not support the video tag.
+            </video>
+          </div>
+          
           <a
             href={downloadUrl}
             className="w-full block text-center bg-green-500 text-white py-3 px-4 rounded-md hover:bg-green-600 transition-colors duration-200"

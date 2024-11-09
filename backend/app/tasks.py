@@ -95,8 +95,8 @@ def create_random_clips(input_path: str, task, target_duration: int = 1500) -> s
     # Allocate progress percentages for different stages
     CLIP_SELECTION_PROGRESS = 10  # 0-30% for selecting clips
     CLIP_CREATION_PROGRESS = 20   # 30-70% for creating clips
-    CONCATENATION_PROGRESS = 50   # 70-85% for concatenating
-    WRITING_PROGRESS = 20         # 85-100% for writing file
+    CONCATENATION_PROGRESS = 20   # 70-85% for concatenating
+    WRITING_PROGRESS = 50         # 85-100% for writing file
 
     while current_duration < target_duration:
         # Calculate progress for clip selection
