@@ -19,7 +19,8 @@ export default function VideoForm() {
     if (jobId) {
       const interval = setInterval(async () => {
         try {
-          const response = await fetch(`http://localhost:8123/api/task-status/${jobId}`)
+          const statusUrl = `http://${window.location.hostname}:8123/api/task-status/${jobId}`
+          const response = await fetch(statusUrl)
           const data = await response.json()
           
           setProgress(data.progress || 0)
@@ -49,7 +50,8 @@ export default function VideoForm() {
     setDownloadUrl(null)
     
     try {
-      const response = await fetch('http://localhost:8123/api/process-video', {
+      const backendUrl = `http://${window.location.hostname}:8123/api/process-video`
+      const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

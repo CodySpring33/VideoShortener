@@ -27,6 +27,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION}
       - S3_BUCKET=${S3_BUCKET}
+      - CORS_ORIGINS=http://localhost:3456,http://192.168.254.12:3456,http://frontend:3456
 
   celery:
     build: ./backend
