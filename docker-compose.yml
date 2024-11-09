@@ -11,6 +11,9 @@ services:
       - /app/.next
     environment:
       - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8123
+    networks:
+      - app-network
     command: sh -c "npm run dev"
 
   backend:
@@ -28,6 +31,8 @@ services:
       - AWS_REGION=${AWS_REGION}
       - S3_BUCKET=${S3_BUCKET}
       - CORS_ORIGINS=http://localhost:3456,http://192.168.254.12:3456,http://frontend:3456
+    networks:
+      - app-network
 
   celery:
     build: ./backend
@@ -40,6 +45,8 @@ services:
       - redis
     env_file:
       - .env
+    networks:
+      - app-network
 
   redis:
     image: redis:alpine
@@ -49,6 +56,12 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   video_temp:

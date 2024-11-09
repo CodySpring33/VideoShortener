@@ -44,40 +44,58 @@ export default function VideoForm() {
     }
   }, [jobId])
 
+  const pollStatus = (jobId) => {
+    setJobId(jobId);
+    // The useEffect hook will handle the actual polling
+    // when jobId changes
+  };
+
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    setError('')
-    setStatus('STARTING')
-    setProgress(0)
-    setDownloadUrl(null)
-    
+    e.preventDefault();
+    setError('');
+    setStatus('STARTING');
+    setProgress(0);
+    setDownloadUrl('');
+
     try {
-      const backendUrl = `http://${window.location.hostname}:8123/api/process-video`
-      const response = await fetch(backendUrl, {
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8123';
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 300000); // 5 minutes
+
+      const response = await fetch(`${backendUrl}/api/process-video`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url, mediaType }),
-      })
+        body: JSON.stringify({
+          url,
+          mediaType: mediaType
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeout);
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json()
-      setJobId(data.job_id)
-    } catch (error) {
-      setError('Error: ' + error.message)
-      setStatus('')
+      const data = await response.json();
+      const jobId = data.job_id;
+
+      // Start polling for status
+      pollStatus(jobId);
+    } catch (err) {
+      setError(err.name === 'AbortError' ? 'Request timed out' : err.message);
+      setStatus('ERROR');
     }
-  }
+  };
 
   if (!mounted) return null
 
   return (
-    <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md">
-      <h1 className="text-3xl font-bold mb-8 text-gray-800">YouTube Media Processor</h1>
+    <div className="max-w-2xl mx-auto p-4 bg-white rounded-lg shadow-md">
+      <h1 className="text-2xl font-bold mb-4">YouTube Video Processor</h1>
       
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
