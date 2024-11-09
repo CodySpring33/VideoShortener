@@ -9,7 +9,11 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3456"],
+    allow_origins=[
+        "http://localhost:3456",
+        "http://192.168.254.12:3456",  # Add your local IP
+        "http://frontend:3456",        # Add container name
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
