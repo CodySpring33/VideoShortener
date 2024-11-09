@@ -9,6 +9,8 @@ const nextConfig = {
     };
     return config;
   },
+  output: 'standalone',
+  postcss: true,
 };
 
 module.exports = nextConfig; 
