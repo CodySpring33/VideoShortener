@@ -5,4 +5,6 @@ redis
 yt-dlp
 python-dotenv
 pydantic
-moviepy 
+moviepy
+boto3
+gunicorn

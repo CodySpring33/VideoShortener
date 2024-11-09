@@ -4,7 +4,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "3000:3000"
+      - "3456:3456"
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -22,15 +22,23 @@ services:
       - video_temp:/tmp/videos
     depends_on:
       - redis
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET=${S3_BUCKET}
 
   celery:
     build: ./backend
-    command: celery -A app.tasks worker --loglevel=info
+    command: celery -A app.tasks:app worker --loglevel=info
     volumes:
       - ./backend:/app
       - video_temp:/tmp/videos
+      - ./.env:/app/.env
     depends_on:
       - redis
+    env_file:
+      - .env
 
   redis:
     image: redis:alpine
