@@ -44,8 +44,10 @@ services:
     image: redis:alpine
     ports:
       - "6379:6379"
-    sysctls:
-      - vm.overcommit_memory=1
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
 
 volumes:
   video_temp:
