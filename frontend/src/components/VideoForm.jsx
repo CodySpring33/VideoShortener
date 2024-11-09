@@ -10,6 +10,8 @@ export default function VideoForm() {
   const [error, setError] = useState('')
   const [progress, setProgress] = useState(0)
   const [downloadUrl, setDownloadUrl] = useState(null)
+  const [isAudioOnly, setIsAudioOnly] = useState(false)
+  const [mediaType, setMediaType] = useState('video')
 
   useEffect(() => {
     setMounted(true)
@@ -56,7 +58,7 @@ export default function VideoForm() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, mediaType }),
       })
 
       if (!response.ok) {
@@ -75,7 +77,7 @@ export default function VideoForm() {
 
   return (
     <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md">
-      <h1 className="text-3xl font-bold mb-8 text-gray-800">YouTube Video Processor</h1>
+      <h1 className="text-3xl font-bold mb-8 text-gray-800">YouTube Media Processor</h1>
       
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
@@ -91,13 +93,38 @@ export default function VideoForm() {
             placeholder="https://youtube.com/watch?v=..."
           />
         </div>
+
+        <div className="flex items-center space-x-4">
+          <label className="inline-flex items-center">
+            <input
+              type="radio"
+              className="form-radio text-blue-500"
+              name="mediaType"
+              value="video"
+              checked={mediaType === 'video'}
+              onChange={(e) => setMediaType(e.target.value)}
+            />
+            <span className="ml-2">Video</span>
+          </label>
+          <label className="inline-flex items-center">
+            <input
+              type="radio"
+              className="form-radio text-blue-500"
+              name="mediaType"
+              value="audio"
+              checked={mediaType === 'audio'}
+              onChange={(e) => setMediaType(e.target.value)}
+            />
+            <span className="ml-2">Audio Only</span>
+          </label>
+        </div>
         
         <button
           type="submit"
           disabled={status === 'PROCESSING'}
           className="w-full bg-blue-500 text-white py-3 px-4 rounded-md hover:bg-blue-600 transition-colors duration-200 disabled:bg-gray-400"
         >
-          Process Video
+          Process {mediaType === 'audio' ? 'Audio' : 'Video'}
         </button>
       </form>
 
@@ -118,15 +145,27 @@ export default function VideoForm() {
 
       {downloadUrl && (
         <div className="mt-6 space-y-4">
-          <div className="aspect-video w-full">
-            <video 
-              className="w-full rounded-lg"
-              controls
-              src={downloadUrl}
-            >
-              Your browser does not support the video tag.
-            </video>
-          </div>
+          {mediaType === 'video' ? (
+            <div className="aspect-video w-full">
+              <video 
+                className="w-full rounded-lg"
+                controls
+                src={downloadUrl}
+              >
+                Your browser does not support the video tag.
+              </video>
+            </div>
+          ) : (
+            <div className="w-full">
+              <audio 
+                className="w-full"
+                controls
+                src={downloadUrl}
+              >
+                Your browser does not support the audio tag.
+              </audio>
+            </div>
+          )}
           
           <a
             href={downloadUrl}
@@ -134,7 +173,7 @@ export default function VideoForm() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            Download Processed Video
+            Download Processed {mediaType === 'audio' ? 'Audio' : 'Video'}
           </a>
         </div>
       )}

@@ -21,11 +21,12 @@ app.add_middleware(
 
 class VideoURL(BaseModel):
     url: str
+    mediaType: str = 'video'  # 'video' or 'audio'
 
 @app.post("/api/process-video")
 async def create_video_process(video: VideoURL):
     # Send task to Celery
-    task = process_video.delay(video.url)
+    task = process_video.delay(video.url, video.mediaType)
     return {"job_id": str(task.id)}
 
 @app.get("/")
