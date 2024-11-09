@@ -44,6 +44,8 @@ services:
     image: redis:alpine
     ports:
       - "6379:6379"
+    sysctls:
+      - vm.overcommit_memory=1
 
 volumes:
   video_temp:
