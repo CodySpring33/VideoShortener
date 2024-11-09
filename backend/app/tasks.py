@@ -1,72 +1,122 @@
-from celery import Celery
+from celery import Celery, states
+from celery.result import AsyncResult
 import yt_dlp
 import os
 import logging
 import random
 from moviepy.editor import VideoFileClip, concatenate_videoclips
+from .utils.s3 import S3Handler
 
-# Initialize Celery
-celery = Celery('tasks', broker='redis://redis:6379/0')
+# Initialize Celery with explicit config module
+app = Celery('tasks')
+app.config_from_object('app.celeryconfig')
 
-@celery.task
-def process_video(youtube_url: str):
+class ProgressHook:
+    def __init__(self, task_id):
+        self.task_id = task_id
+
+    def __call__(self, d):
+        if d['status'] == 'downloading':
+            try:
+                percentage = float(d.get('_percent_str', '0%').replace('%', ''))
+                app.backend.store_result(
+                    self.task_id,
+                    {
+                        'status': 'DOWNLOADING',
+                        'progress': percentage,
+                        'message': f"Downloading: {percentage:.1f}%"
+                    },
+                    'DOWNLOADING'
+                )
+            except (ValueError, TypeError):
+                pass
+
+@app.task(bind=True)
+def process_video(self, youtube_url: str):
     try:
+        # Initialize download state
+        self.update_state(
+            state='DOWNLOADING',
+            meta={'progress': 0, 'message': 'Starting download...'}
+        )
+        
         os.makedirs('/tmp/videos', exist_ok=True)
         
-        # Download video (existing code)
         ydl_opts = {
             'format': 'best',
             'outtmpl': '/tmp/videos/%(id)s.%(ext)s',
-            'verbose': True
+            'progress_hooks': [ProgressHook(self.request.id)]
         }
 
-        # Download video
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=True)
             video_path = ydl.prepare_filename(info)
 
-        # Process the video
-        output_path = create_random_clips(video_path)
-
+        # Update to processing state
+        self.update_state(
+            state='PROCESSING',
+            meta={'progress': 0, 'message': 'Processing video...'}
+        )
+        
+        output_path = create_random_clips(video_path, self)
+        
+        # Update to uploading state
+        self.update_state(
+            state='UPLOADING',
+            meta={'progress': 0, 'message': 'Uploading to S3...'}
+        )
+        
+        s3_handler = S3Handler()
+        download_url = s3_handler.upload_file(output_path)
+        
+        # Clean up the original downloaded video
+        if os.path.exists(video_path):
+            os.remove(video_path)
+        
         return {
-            "status": "success",
-            "video_path": output_path,
+            "status": "SUCCESS",
+            "download_url": download_url,
             "title": info.get('title', 'Unknown')
         }
 
     except Exception as e:
-        logging.error(f"Error processing video: {str(e)}")
         return {
-            "status": "error",
+            "status": "ERROR",
             "message": str(e)
         }
 
-def create_random_clips(input_path: str, target_duration: int = 1500) -> str:
-    """
-    Creates a 25-minute video from random clips
-    target_duration is in seconds (25 minutes = 1500 seconds)
-    """
+def create_random_clips(input_path: str, task, target_duration: int = 1500) -> str:
     video = VideoFileClip(input_path)
     total_duration = video.duration
-    
     clips = []
     current_duration = 0
     used_segments = []
 
+    # Allocate progress percentages for different stages
+    CLIP_SELECTION_PROGRESS = 10  # 0-30% for selecting clips
+    CLIP_CREATION_PROGRESS = 20   # 30-70% for creating clips
+    CONCATENATION_PROGRESS = 50   # 70-85% for concatenating
+    WRITING_PROGRESS = 20         # 85-100% for writing file
+
     while current_duration < target_duration:
-        # Calculate remaining duration needed
+        # Calculate progress for clip selection
+        selection_progress = (current_duration / target_duration) * CLIP_SELECTION_PROGRESS
+        task.update_state(
+            state='PROCESSING',
+            meta={
+                'progress': selection_progress,
+                'message': f'Selecting clips: {selection_progress:.1f}%'
+            }
+        )
+        
         remaining_duration = target_duration - current_duration
+        # Set clip duration to around 5 minutes (300 seconds)
+        clip_duration = min(random.randint(270, 330), remaining_duration)
         
-        # Generate random clip duration (between 30 and 120 seconds)
-        clip_duration = min(random.randint(30, 120), remaining_duration)
-        
-        # Find a non-overlapping segment
         while True:
-            # Random start time
             max_start = total_duration - clip_duration
             start_time = random.uniform(0, max_start)
             
-            # Check if this segment overlaps with any used segments
             overlap = False
             for used_start, used_end in used_segments:
                 if not (start_time + clip_duration <= used_start or start_time >= used_end):
@@ -75,31 +125,61 @@ def create_random_clips(input_path: str, target_duration: int = 1500) -> str:
             
             if not overlap:
                 break
+
+        # Update progress for clip creation
+        creation_progress = CLIP_SELECTION_PROGRESS + ((current_duration / target_duration) * CLIP_CREATION_PROGRESS)
+        task.update_state(
+            state='PROCESSING',
+            meta={
+                'progress': creation_progress,
+                'message': f'Creating clip {len(clips) + 1}: {creation_progress:.1f}%'
+            }
+        )
         
-        # Extract the clip
         clip = video.subclip(start_time, start_time + clip_duration)
         clips.append(clip)
         used_segments.append((start_time, start_time + clip_duration))
         current_duration += clip_duration
 
-    # Concatenate all clips
-    final_video = concatenate_videoclips(clips)
+    # Update progress for concatenation start
+    task.update_state(
+        state='PROCESSING',
+        meta={
+            'progress': CLIP_SELECTION_PROGRESS + CLIP_CREATION_PROGRESS,
+            'message': 'Starting concatenation...'
+        }
+    )
     
-    # Generate output path
+    final_video = concatenate_videoclips(clips)
     output_path = input_path.rsplit('.', 1)[0] + '_processed.mp4'
+
+    # Update progress for writing start
+    task.update_state(
+        state='PROCESSING',
+        meta={
+            'progress': CLIP_SELECTION_PROGRESS + CLIP_CREATION_PROGRESS + CONCATENATION_PROGRESS,
+            'message': 'Writing final video...'
+        }
+    )
     
     # Write the final video
-    final_video.write_videofile(output_path)
-    
-    # Close all clips to free up resources
+    final_video.write_videofile(
+        output_path,
+        codec='libx264',
+        audio_codec='aac',
+        temp_audiofile='temp-audio.m4a',
+        remove_temp=True
+    )
+
+    # Clean up
     final_video.close()
     for clip in clips:
         clip.close()
     video.close()
-    
+
     return output_path
 
-@celery.task
+@app.task
 def cleanup_s3_file(file_path: str):
     try:
         if os.path.exists(file_path):

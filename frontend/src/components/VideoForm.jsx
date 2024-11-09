@@ -1,24 +1,53 @@
 'use client'
 import { useState, useEffect } from 'react'
 import React from 'react'
+
 export default function VideoForm() {
   const [mounted, setMounted] = useState(false)
   const [url, setUrl] = useState('')
+  const [jobId, setJobId] = useState(null)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  const [progress, setProgress] = useState(0)
+  const [downloadUrl, setDownloadUrl] = useState(null)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
-  if (!mounted) {
-    return null
-  }
+  useEffect(() => {
+    if (jobId) {
+      const interval = setInterval(async () => {
+        try {
+          const response = await fetch(`http://localhost:8000/api/task-status/${jobId}`)
+          const data = await response.json()
+          
+          setProgress(data.progress || 0)
+          setStatus(data.status)
+
+          if (data.status === 'SUCCESS') {
+            clearInterval(interval)
+            setDownloadUrl(data.result.download_url)
+          } else if (data.status === 'ERROR') {
+            clearInterval(interval)
+            setError(data.message)
+          }
+        } catch (error) {
+          console.error('Error checking status:', error)
+        }
+      }, 1000)
+
+      return () => clearInterval(interval)
+    }
+  }, [jobId])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
-    setStatus('Processing...')
+    setStatus('STARTING')
+    setProgress(0)
+    setDownloadUrl(null)
+    
     try {
       const response = await fetch('http://localhost:8000/api/process-video', {
         method: 'POST',
@@ -33,12 +62,14 @@ export default function VideoForm() {
       }
 
       const data = await response.json()
-      setStatus(`Job ID: ${data.job_id}`)
+      setJobId(data.job_id)
     } catch (error) {
       setError('Error: ' + error.message)
       setStatus('')
     }
   }
+
+  if (!mounted) return null
 
   return (
     <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md">
@@ -61,15 +92,38 @@ export default function VideoForm() {
         
         <button
           type="submit"
-          className="w-full bg-blue-500 text-white py-3 px-4 rounded-md hover:bg-blue-600 transition-colors duration-200"
+          disabled={status === 'PROCESSING'}
+          className="w-full bg-blue-500 text-white py-3 px-4 rounded-md hover:bg-blue-600 transition-colors duration-200 disabled:bg-gray-400"
         >
           Process Video
         </button>
       </form>
 
-      {status && (
-        <div className="mt-4 p-4 bg-green-50 text-green-700 rounded-md">
-          {status}
+      {status && status !== 'SUCCESS' && (
+        <div className="mt-6">
+          <div className="mb-2 flex justify-between">
+            <span className="text-sm font-medium text-gray-700">{status}</span>
+            <span className="text-sm font-medium text-gray-700">{Math.round(progress)}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2.5">
+            <div 
+              className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
+        </div>
+      )}
+
+      {downloadUrl && (
+        <div className="mt-6">
+          <a
+            href={downloadUrl}
+            className="w-full block text-center bg-green-500 text-white py-3 px-4 rounded-md hover:bg-green-600 transition-colors duration-200"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Download Processed Video
+          </a>
         </div>
       )}
 
